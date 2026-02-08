@@ -1,0 +1,57 @@
+# Deploy backend to AWS Lambda. Set secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
+name: Deploy to AWS Lambda
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy-aws.yml"
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-lambda.txt -t package/
+          cp core.py package/ && cp -r providers handlers package/
+          cd package && zip -r ../lambda-deploy.zip . && cd ..
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy to Lambda
+        working-directory: backend
+        run: |
+          FUNCTION_NAME="${LAMBDA_FUNCTION_NAME:-multi-llm-debate}"
+          if aws lambda get-function --function-name "$FUNCTION_NAME" 2>/dev/null; then
+            aws lambda update-function-code --function-name "$FUNCTION_NAME" --zip-file fileb://lambda-deploy.zip
+          else
+            echo "Create the Lambda function first with handler 'handlers.aws_lambda.handler' and runtime python3.11, then re-run."
+            aws lambda create-function --function-name "$FUNCTION_NAME" \
+              --runtime python3.11 \
+              --handler handlers.aws_lambda.handler \
+              --zip-file fileb://lambda-deploy.zip \
+              --role "${{ secrets.AWS_LAMBDA_ROLE_ARN }}" \
+              --timeout 120 \
+              --memory-size 512 \
+              || true
+          fi

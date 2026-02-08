@@ -1,0 +1,38 @@
+:root {
+  --bg: #0f0f12;
+  --surface: #18181d;
+  --border: #2a2a32;
+  --text: #e8e8ed;
+  --muted: #8888a0;
+  --accent: #7c6bff;
+  --accent-dim: rgba(124, 107, 255, 0.15);
+  --user-bg: #1e1e28;
+  --chatgpt: #10a37f;
+  --gemini: #8e75e8;
+  --grok: #1da1f2;
+  --kimi: #ff6b35;
+  --claude: #d4a574;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Outfit", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  line-height: 1.5;
+}
+
+#root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+code, .mono {
+  font-family: "JetBrains Mono", monospace;
+}

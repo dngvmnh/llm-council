@@ -1,0 +1,27 @@
+# Env and secrets
+.env
+.env.example
+*.pem
+
+# Python
+backend/.venv/
+backend/package/
+backend/lambda-deploy.zip
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

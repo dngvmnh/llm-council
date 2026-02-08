@@ -1,0 +1,46 @@
+# Deploy backend to Google Cloud Functions (2nd gen). Set up GCP auth and set secret GCP_SA_KEY or use workload identity.
+name: Deploy to GCP Cloud Functions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy-gcp.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy Cloud Function
+        working-directory: backend
+        run: |
+          gcloud functions deploy debate-api \
+            --gen2 \
+            --runtime=python311 \
+            --region=${{ secrets.GCP_REGION || 'us-central1' }} \
+            --source=. \
+            --entry-point=main.debate_http \
+            --trigger-http \
+            --allow-unauthenticated \
+            --memory=512MB \
+            --timeout=120s
+        env:
+          CLOUDSDK_CORE_PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+        # Set LLM API keys in GCP Console > Functions > debate-api > Edit > Environment variables

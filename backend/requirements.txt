@@ -1,0 +1,10 @@
+# Multi-LLM Debate Backend
+python-dotenv>=1.0.0
+openai>=1.12.0
+google-genai>=1.0.0
+anthropic>=0.18.0
+requests>=2.31.0
+httpx>=0.27.0
+# Local dev server
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
