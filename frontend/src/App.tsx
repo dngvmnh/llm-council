@@ -152,7 +152,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="header">
-        <h1>Multi-LLM Debate</h1>
+        <h1>Multiple LLMs Council</h1>
         <p className="subtitle">Chat with multiple LLMs in one place</p>
         <button
           className="model-selector-toggle"
