@@ -8,10 +8,11 @@ from google.genai import types
 
 
 def _gemini_sync_generate(client: genai.Client, model_name: str, prompt: str) -> str:
+    max_tokens = int(os.getenv("DEFAULT_MAX_TOKENS", "256"))
     r = client.models.generate_content(
         model=model_name,
         contents=prompt,
-        config=types.GenerateContentConfig(max_output_tokens=2048),
+        config=types.GenerateContentConfig(max_output_tokens=max_tokens),
     )
     return (r.text or "").strip()
 

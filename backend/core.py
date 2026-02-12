@@ -3,6 +3,9 @@ Debate orchestration: fan-out to all configured LLMs (single-key via OpenRouter/
 """
 import asyncio
 import os
+import time
+import hashlib
+import json
 from typing import List
 
 from providers import (
@@ -23,6 +26,15 @@ DEFAULT_SYSTEM = (
     "Read their responses carefully, and feel free to agree, disagree, build upon, or challenge their viewpoints. "
     "Give a clear, concise response that engages with the conversation."
 )
+
+# Simple in-memory cache for recent debate requests (key -> (ts, responses_list))
+_CACHE: dict = {}
+_CACHE_LOCK = asyncio.Lock()
+# TTL for cache entries (seconds)
+_CACHE_TTL = int(os.getenv("DEFAULT_CACHE_TTL_SEC", "300"))
+
+# Default max tokens (applies to provider requests when supported)
+DEFAULT_MAX_TOKENS = int(os.getenv("DEFAULT_MAX_TOKENS", "256"))
 
 
 def _get_native_providers():
@@ -83,6 +95,30 @@ async def run_debate_round(
         ]
     system = system_prompt or DEFAULT_SYSTEM
 
+    # Compute cache key (messages + system + selected_models)
+    try:
+        key_obj = {
+            "system": system,
+            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "selected_models": selected_models or [],
+        }
+        key_raw = json.dumps(key_obj, sort_keys=True, ensure_ascii=False)
+        key = hashlib.sha256(key_raw.encode("utf-8")).hexdigest()
+    except Exception:
+        key = None
+
+    # Return cached responses if fresh
+    if key is not None:
+        async with _CACHE_LOCK:
+            item = _CACHE.get(key)
+            if item:
+                ts, cached = item
+                if time.time() - ts < _CACHE_TTL:
+                    # return a shallow copy to avoid mutation
+                    return [ProviderResponse(r.provider_id, r.content, r.error) for r in cached]
+                else:
+                    del _CACHE[key]
+
     async def openrouter_task():
         responses = await get_openrouter_responses(messages, system)
         if selected_models:
@@ -130,6 +166,15 @@ async def run_debate_round(
             out.append(ProviderResponse(provider_id=p.provider_id, content="", error=str(r)))
         else:
             out.append(r)
+
+    # store in cache
+    if key is not None:
+        async with _CACHE_LOCK:
+            try:
+                _CACHE[key] = (time.time(), [ProviderResponse(r.provider_id, r.content, r.error) for r in out])
+            except Exception:
+                pass
+
     return out
 
 
@@ -176,7 +221,7 @@ async def stream_debate_round(
                     stream = await client.chat.completions.create(
                         model=m_id,
                         messages=openai_messages,
-                        max_tokens=2048,
+                        max_tokens=DEFAULT_MAX_TOKENS,
                         stream=True,
                     )
                     async for chunk in stream:
@@ -205,7 +250,7 @@ async def stream_debate_round(
                     stream = await client.chat.completions.create(
                         model=m_id,
                         messages=openai_messages,
-                        max_tokens=2048,
+                        max_tokens=DEFAULT_MAX_TOKENS,
                         stream=True,
                     )
                     async for chunk in stream:

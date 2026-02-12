@@ -20,6 +20,8 @@ class KimiProvider(LLMProvider):
             for m in messages:
                 openai_messages.append({"role": m.role, "content": m.content})
             async with httpx.AsyncClient(timeout=60.0) as client:
+                max_tokens = int(os.getenv("DEFAULT_MAX_TOKENS", "256"))
+
                 r = await client.post(
                     f"{MOONSHOT_BASE}/chat/completions",
                     headers={
@@ -29,7 +31,7 @@ class KimiProvider(LLMProvider):
                     json={
                         "model": self._model,
                         "messages": openai_messages,
-                        "max_tokens": 2048,
+                        "max_tokens": max_tokens,
                     },
                 )
                 r.raise_for_status()

@@ -43,12 +43,14 @@ async def get_groq_responses(
     for m in messages:
         openai_messages.append({"role": m.role, "content": m.content})
 
+    max_tokens = int(os.getenv("DEFAULT_MAX_TOKENS", "256"))
+
     async def one_model(model_id: str) -> ProviderResponse:
         try:
             r = await client.chat.completions.create(
                 model=model_id,
                 messages=openai_messages,
-                max_tokens=2048,
+                max_tokens=max_tokens,
             )
             content = (r.choices[0].message.content or "").strip()
             return ProviderResponse(provider_id=model_id, content=content)

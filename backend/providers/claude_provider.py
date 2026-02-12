@@ -13,9 +13,10 @@ class ClaudeProvider(LLMProvider):
         try:
             system = system_prompt or ""
             anthropic_messages = [{"role": m.role, "content": m.content} for m in messages if m.role != "system"]
+            max_tokens = int(os.getenv("DEFAULT_MAX_TOKENS", "256"))
             r = await self._client.messages.create(
                 model="claude-3-5-sonnet-20241022",
-                max_tokens=2048,
+                max_tokens=max_tokens,
                 system=system,
                 messages=anthropic_messages,
             )

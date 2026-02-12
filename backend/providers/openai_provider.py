@@ -16,10 +16,11 @@ class OpenAIProvider(LLMProvider):
                 openai_messages.append({"role": "system", "content": system_prompt})
             for m in messages:
                 openai_messages.append({"role": m.role, "content": m.content})
+            max_tokens = int(os.getenv("DEFAULT_MAX_TOKENS", "256"))
             r = await self._client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=openai_messages,
-                max_tokens=2048,
+                max_tokens=max_tokens,
             )
             content = r.choices[0].message.content or ""
             return ProviderResponse(provider_id=self.provider_id, content=content)
