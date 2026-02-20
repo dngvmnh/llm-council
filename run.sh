@@ -16,8 +16,8 @@ if [ ! -f "$VENV_PYTHON" ]; then
     exit 1
 fi
 
-# Ensure uvicorn is installed in the venv before running
-$VENV_PYTHON -m pip install -q uvicorn fastapi python-dotenv 
+# Ensure dependencies are installed in the venv before running
+$VENV_PYTHON -m pip install -q -r requirements.txt
 
 # Run the server using the venv python
 $VENV_PYTHON server.py &

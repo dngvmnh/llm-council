@@ -1,6 +1,6 @@
 """
 Local dev server: POST /debate with JSON {"messages": [{"role":"user","content":"..."}]}
-Optional: POST /debate/stream for SSE streaming (OpenRouter or Groq only).
+Optional: POST /debate/stream for SSE streaming (OpenAI).
 Run from backend dir: python server.py  or  uvicorn server:app --reload --port 8080
 """
 import json
@@ -49,7 +49,7 @@ async def root():
 @app.get("/models")
 async def list_models():
     """List all available model IDs."""
-    return {"models": get_available_models()}
+    return {"models": await get_available_models()}
 
 
 @app.post("/debate")
@@ -66,12 +66,12 @@ async def _stream_events(messages: list[Message], selected_models: list[str] | N
 
 @app.post("/debate/stream")
 async def debate_stream(req: DebateRequest):
-    """Stream debate via SSE when using OPENROUTER_API_KEY or GROQ_API_KEY."""
-    if not os.environ.get("OPENROUTER_API_KEY") and not os.environ.get("GROQ_API_KEY"):
+    """Stream debate via SSE (OpenAI)."""
+    if not os.environ.get("OPENAI_API_KEY"):
         return JSONResponse(
             status_code=400,
             content={
-                "error": "Streaming requires OPENROUTER_API_KEY or GROQ_API_KEY. Use non-streaming POST /debate for native provider keys.",
+                "error": "Streaming requires OPENAI_API_KEY.",
             },
         )
     messages = [Message(role=m.get("role", "user"), content=m.get("content", "")) for m in req.messages]

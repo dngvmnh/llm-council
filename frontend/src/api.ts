@@ -45,7 +45,7 @@ export async function sendDebateRound(messages: ChatMessage[], modelIds?: string
   return res.json();
 }
 
-/** Stream debate via SSE (OpenRouter or Groq). Calls onEvent for each parsed event. */
+/** Stream debate via SSE (OpenAI). Calls onEvent for each parsed event. */
 export async function sendDebateRoundStream(
   messages: ChatMessage[],
   onEvent: (ev: StreamEvent) => void,

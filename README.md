@@ -1,14 +1,9 @@
 # Multilple LLMs Council
 
-A shared environment where **you** chat with multiple LLMs at once. Each message is sent to every configured provider in parallel; responses appear side-by-side so you can compare and continue the discussion.
-
-**Two ways to run multiple models:**
-
-1. **One API key (recommended)** – Use **OpenRouter** or **Groq** to call many models with a single key. OpenRouter gives access to OpenAI, Anthropic, Google, xAI, Moonshot, etc.; Groq gives access to Llama, Mixtral, and other Groq-hosted models. Streaming is supported for both.
-2. **Per-provider keys** – Set `OPENAI_API_KEY`, `GEMINI_API_KEY`, `XAI_API_KEY`, `MOONSHOT_API_KEY`, and/or `ANTHROPIC_API_KEY` to call each provider directly.
+A shared environment where **you** chat with multiple OpenAI models at once. Each message is sent to the selected models in parallel; responses appear side-by-side so you can compare and continue the discussion.
 
 - **Backend**: Python, deployable to **AWS Lambda** or **Google Cloud Functions** (or run locally).
-- **Frontend**: React + Vite; single-page chat UI with optional **Stream** toggle for live updates when using OpenRouter or Groq.
+- **Frontend**: React + Vite; single-page chat UI with optional **Stream** toggle for live updates.
 - **CI/CD**: GitHub Actions to deploy the backend to Lambda or GCP on push to `main`.
 
 (Aegis framework is not used; this is a standalone app.)
@@ -52,24 +47,14 @@ Vite will print a URL like **`http://localhost:5173`**. **Open that URL in your 
 
 ### 3. Environment variables
 
-Copy `.env.example` to `.env` (backend). **Easiest: one key for many models.**
+Copy `.env.example` to `.env` (backend).
 
 | Variable | Purpose |
 |----------|--------|
-| **`OPENROUTER_API_KEY`** | One key for many models (OpenAI, Anthropic, Google, xAI, Moonshot, etc.). Get a key at [openrouter.ai](https://openrouter.ai). |
-| **`OPENROUTER_DEBATE_MODELS`** | Optional. Comma-separated model IDs (e.g. `openai/gpt-4o-mini,anthropic/claude-3.5-haiku,google/gemini-2.0-flash-exp`). Defaults to a small set of models. |
-| **`GROQ_API_KEY`** | One key for Groq-hosted models (Llama, Mixtral, etc.). Get a key at [console.groq.com](https://console.groq.com). |
-| **`GROQ_DEBATE_MODELS`** | Optional. Comma-separated Groq model IDs. Defaults to e.g. `llama-3.3-70b-versatile`, `mixtral-8x7b-32768`. |
-
-**Or use per-provider keys** (no OpenRouter/Groq):
-
-| Variable | Provider |
-|----------|----------|
-| `OPENAI_API_KEY` | ChatGPT |
-| `GEMINI_API_KEY` | Gemini |
-| `XAI_API_KEY` | Grok (xAI) |
-| `MOONSHOT_API_KEY` | Kimi (Moonshot) |
-| `ANTHROPIC_API_KEY` | Claude |
+| **`OPENAI_API_KEY`** | OpenAI API key (used for both model listing and chat). |
+| **`OPENAI_DEBATE_MODELS`** | Optional. Comma-separated model IDs to use for debate fan-out. |
+| **`MAX_MODELS_PER_ROUND`** | Optional. Hard cap on how many models can run per message (default `3`). |
+| **`DEFAULT_MAX_TOKENS`** | Optional. Default max output tokens per model call (default `256`). |
 
 ## Deploying
 
@@ -103,7 +88,7 @@ The function URL will look like `https://REGION-PROJECT.cloudfunctions.net/debat
 ```
 multi-llm-debate/
 ├── backend/
-│   ├── providers/       # LLM adapters + OpenRouter/Groq (one key, N models)
+│   ├── providers/       # OpenAI adapters (one key, N models)
 │   ├── handlers/       # AWS Lambda + GCP HTTP handlers
 │   ├── core.py          # Debate orchestration (fan-out to all providers)
 │   ├── server.py        # Local FastAPI dev server
@@ -122,9 +107,9 @@ multi-llm-debate/
 - **POST /debate**  
   Body: `{ "messages": [ { "role": "user"|"assistant", "content": "..." } ] }`  
   Response: `{ "responses": [ { "provider_id": "<model or slug>", "content": "...", "error": null|"..." } ] }`  
-  All configured providers (OpenRouter models, Groq models, and/or native keys) are called in parallel.
+  All selected OpenAI models are called in parallel.
 
-- **POST /debate/stream** (local server only when using OpenRouter or Groq)  
+- **POST /debate/stream** (local server)  
   Same body. Response: `text/event-stream` with SSE events `data: {"model_id":"...","delta":"..."}` or `{"model_id":"...","done":true}` or `{"model_id":"...","error":"..."}`.  
   In the frontend, enable **Stream** to use this and see responses appear in real time.
 

@@ -1,5 +1,5 @@
 """
-Debate orchestration: fan-out to all configured LLMs (single-key via OpenRouter/Groq or per-provider keys).
+Debate orchestration: fan-out to selected OpenAI models.
 """
 import asyncio
 import os
@@ -11,14 +11,14 @@ from typing import List
 from providers import (
     Message,
     ProviderResponse,
-    OpenAIProvider,
-    GeminiProvider,
-    GrokProvider,
-    KimiProvider,
-    ClaudeProvider,
 )
-from providers.openrouter_provider import get_openrouter_responses, _get_models as _get_openrouter_models, _slug as _openrouter_slug
-from providers.groq_multi_provider import get_groq_responses, _get_models as _get_groq_models
+from providers.openai_multi_provider import (
+    filter_chat_model_ids,
+    get_openai_responses,
+    get_debate_models,
+    list_available_openai_models,
+    uses_max_completion_tokens,
+)
 
 DEFAULT_SYSTEM = (
     "You are participating in a shared discussion with the user and other AI assistants. "
@@ -37,46 +37,24 @@ _CACHE_TTL = int(os.getenv("DEFAULT_CACHE_TTL_SEC", "300"))
 DEFAULT_MAX_TOKENS = int(os.getenv("DEFAULT_MAX_TOKENS", "256"))
 
 
-def _get_native_providers():
-    """Per-provider API keys (OpenAI, Gemini, xAI, Moonshot, Anthropic)."""
-    providers = []
-    if os.environ.get("OPENAI_API_KEY"):
-        providers.append(OpenAIProvider())
-    if os.environ.get("GEMINI_API_KEY"):
-        providers.append(GeminiProvider())
-    if os.environ.get("XAI_API_KEY"):
-        providers.append(GrokProvider())
-    if os.environ.get("MOONSHOT_API_KEY"):
-        providers.append(KimiProvider())
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        providers.append(ClaudeProvider())
-    return providers
-
-
 def _has_any_key() -> bool:
-    return bool(
-        os.environ.get("OPENROUTER_API_KEY")
-        or os.environ.get("GROQ_API_KEY")
-        or os.environ.get("OPENAI_API_KEY")
-        or os.environ.get("GEMINI_API_KEY")
-        or os.environ.get("XAI_API_KEY")
-        or os.environ.get("MOONSHOT_API_KEY")
-        or os.environ.get("ANTHROPIC_API_KEY")
-    )
+    return bool(os.environ.get("OPENAI_API_KEY"))
 
 
-def get_available_models() -> list[str]:
-    """Return list of all available model IDs (for frontend selection)."""
-    models = []
-    if os.environ.get("OPENROUTER_API_KEY"):
-        for m in _get_openrouter_models():
-            models.append(_openrouter_slug(m))
-    if os.environ.get("GROQ_API_KEY"):
-        models.extend(_get_groq_models())
-    native = _get_native_providers()
-    for p in native:
-        models.append(p.provider_id)
-    return sorted(models)
+async def get_available_models() -> list[str]:
+    """Return OpenAI chat-capable model IDs for frontend selection."""
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return []
+    try:
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=api_key)
+        models = await list_available_openai_models(client)
+        # Ensure debate defaults are always present if the API listing filters them out.
+        return filter_chat_model_ids(set(models).union(set(get_debate_models())))
+    except Exception:
+        # Fallback to configured debate models.
+        return filter_chat_model_ids(get_debate_models())
 
 
 async def run_debate_round(
@@ -84,23 +62,39 @@ async def run_debate_round(
     system_prompt: str | None = None,
     selected_models: List[str] | None = None,
 ) -> List[ProviderResponse]:
-    """Send conversation to all configured LLMs in parallel. Uses OpenRouter/Groq (one key, N models) and/or native provider keys."""
+    """Send conversation to selected OpenAI models in parallel."""
     if not _has_any_key():
         return [
             ProviderResponse(
                 provider_id="system",
                 content="",
-                error="No LLM API keys configured. Set OPENROUTER_API_KEY or GROQ_API_KEY (one key, multiple models), or any of: OPENAI_API_KEY, GEMINI_API_KEY, XAI_API_KEY, MOONSHOT_API_KEY, ANTHROPIC_API_KEY",
+                error="No LLM API keys configured. Set OPENAI_API_KEY.",
             )
         ]
     system = system_prompt or DEFAULT_SYSTEM
+
+    # Guardrail: cap number of models per round to avoid accidental credit burn.
+    max_models_per_round = int(os.getenv("MAX_MODELS_PER_ROUND", "100"))
+    effective_selected_models: list[str] | None = None
+    truncated_notice: str | None = None
+    if selected_models:
+        # Preserve caller order, drop duplicates.
+        deduped = list(dict.fromkeys(selected_models))
+        if max_models_per_round > 0 and len(deduped) > max_models_per_round:
+            truncated = deduped[:max_models_per_round]
+            truncated_notice = (
+                f"Selected {len(deduped)} models but MAX_MODELS_PER_ROUND={max_models_per_round}; "
+                f"running only: {', '.join(truncated)}"
+            )
+            deduped = truncated
+        effective_selected_models = deduped
 
     # Compute cache key (messages + system + selected_models)
     try:
         key_obj = {
             "system": system,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
-            "selected_models": selected_models or [],
+            "selected_models": effective_selected_models or [],
         }
         key_raw = json.dumps(key_obj, sort_keys=True, ensure_ascii=False)
         key = hashlib.sha256(key_raw.encode("utf-8")).hexdigest()
@@ -119,53 +113,20 @@ async def run_debate_round(
                 else:
                     del _CACHE[key]
 
-    async def openrouter_task():
-        responses = await get_openrouter_responses(messages, system)
-        if selected_models:
-            return [r for r in responses if r.provider_id in selected_models]
-        return responses
-
-    async def groq_task():
-        responses = await get_groq_responses(messages, system)
-        if selected_models:
-            return [r for r in responses if r.provider_id in selected_models]
-        return responses
-
-    native = _get_native_providers()
-    if selected_models:
-        native = [p for p in native if p.provider_id in selected_models]
-
     tasks = []
-    if os.environ.get("OPENROUTER_API_KEY"):
-        tasks.append(openrouter_task())
-    if os.environ.get("GROQ_API_KEY"):
-        tasks.append(groq_task())
-    for p in native:
-        tasks.append(p.chat(messages, system))
+    tasks.append(get_openai_responses(messages, system, selected_models=effective_selected_models))
 
     results = await asyncio.gather(*tasks, return_exceptions=True)
     out: List[ProviderResponse] = []
     idx = 0
-    if os.environ.get("OPENROUTER_API_KEY"):
-        r = results[idx]
-        idx += 1
-        if isinstance(r, Exception):
-            out.append(ProviderResponse(provider_id="openrouter", content="", error=str(r)))
-        else:
-            out.extend(r)
-    if os.environ.get("GROQ_API_KEY"):
-        r = results[idx]
-        idx += 1
-        if isinstance(r, Exception):
-            out.append(ProviderResponse(provider_id="groq", content="", error=str(r)))
-        else:
-            out.extend(r)
-    for i, p in enumerate(native):
-        r = results[idx + i]
-        if isinstance(r, Exception):
-            out.append(ProviderResponse(provider_id=p.provider_id, content="", error=str(r)))
-        else:
-            out.append(r)
+    r = results[idx]
+    if isinstance(r, Exception):
+        out.append(ProviderResponse(provider_id="openai", content="", error=str(r)))
+    else:
+        out.extend(r)
+
+    if truncated_notice:
+        out.insert(0, ProviderResponse(provider_id="system", content="", error=truncated_notice))
 
     # store in cache
     if key is not None:
@@ -184,21 +145,28 @@ async def stream_debate_round(
     selected_models: List[str] | None = None,
 ):
     """
-    Stream debate responses when using OpenRouter or Groq (one key, N models).
+    Stream debate responses when using OpenAI.
     Yields dicts: {"model_id": str, "delta": str} | {"model_id": str, "done": True} | {"model_id": str, "error": str}.
-    If only native providers are configured, yields nothing (use run_debate_round instead).
+    If OPENAI_API_KEY is not set, yields nothing.
     """
-    from providers.openrouter_provider import (
-        OPENROUTER_BASE,
-        _get_models as _openrouter_models,
-        _slug as _openrouter_slug,
-    )
-    from providers.groq_multi_provider import (
-        GROQ_BASE,
-        _get_models as _groq_models,
-    )
-
     system = system_prompt or DEFAULT_SYSTEM
+    max_models_per_round = int(os.getenv("MAX_MODELS_PER_ROUND", "100"))
+    effective_selected_models: list[str] | None = None
+    truncated_notice: str | None = None
+    if selected_models:
+        deduped = list(dict.fromkeys(selected_models))
+        if max_models_per_round > 0 and len(deduped) > max_models_per_round:
+            truncated = deduped[:max_models_per_round]
+            truncated_notice = (
+                f"Selected {len(deduped)} models but MAX_MODELS_PER_ROUND={max_models_per_round}; "
+                f"running only: {', '.join(truncated)}"
+            )
+            deduped = truncated
+        effective_selected_models = deduped
+
+    if truncated_notice:
+        yield {"model_id": "system", "delta": truncated_notice}
+
     openai_messages = [{"role": "system", "content": system}] if system else []
     for m in messages:
         openai_messages.append({"role": m.role, "content": m.content})
@@ -206,53 +174,37 @@ async def stream_debate_round(
     queue: asyncio.Queue = asyncio.Queue()
     expected_sentinels = 0
 
-    if os.environ.get("OPENROUTER_API_KEY"):
+    if os.environ.get("OPENAI_API_KEY"):
         from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=os.environ["OPENROUTER_API_KEY"], base_url=OPENROUTER_BASE)
-        openrouter_models = _openrouter_models()
-        if selected_models:
-            openrouter_models = [m for m in openrouter_models if _openrouter_slug(m) in selected_models]
-        for model_id in openrouter_models:
-            slug = _openrouter_slug(model_id)
+
+        client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
+        models = effective_selected_models or get_debate_models()
+
+        for model_id in models:
             expected_sentinels += 1
 
-            async def stream_one(m_id: str, s: str):
+            async def stream_one(m_id: str):
                 try:
-                    stream = await client.chat.completions.create(
-                        model=m_id,
-                        messages=openai_messages,
-                        max_tokens=DEFAULT_MAX_TOKENS,
-                        stream=True,
-                    )
-                    async for chunk in stream:
-                        delta = (chunk.choices[0].delta.content or "") if chunk.choices else ""
-                        if delta:
-                            await queue.put({"model_id": s, "delta": delta})
-                    await queue.put({"model_id": s, "done": True})
-                except Exception as e:
-                    await queue.put({"model_id": s, "error": str(e)})
-                finally:
-                    await queue.put(None)
+                    params = {"model": m_id, "messages": openai_messages, "stream": True}
+                    if uses_max_completion_tokens(m_id):
+                        params["max_completion_tokens"] = DEFAULT_MAX_TOKENS
+                    else:
+                        params["max_tokens"] = DEFAULT_MAX_TOKENS
 
-            asyncio.create_task(stream_one(model_id, slug))
-
-    if os.environ.get("GROQ_API_KEY"):
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=os.environ["GROQ_API_KEY"], base_url=GROQ_BASE)
-        groq_models = _groq_models()
-        if selected_models:
-            groq_models = [m for m in groq_models if m in selected_models]
-        for model_id in groq_models:
-            expected_sentinels += 1
-
-            async def stream_one_groq(m_id: str):
-                try:
-                    stream = await client.chat.completions.create(
-                        model=m_id,
-                        messages=openai_messages,
-                        max_tokens=DEFAULT_MAX_TOKENS,
-                        stream=True,
-                    )
+                    try:
+                        stream = await client.chat.completions.create(**params)
+                    except Exception as e:
+                        msg = str(e)
+                        if "Unsupported parameter: 'max_tokens'" in msg and "max_completion_tokens" in msg:
+                            params.pop("max_tokens", None)
+                            params["max_completion_tokens"] = DEFAULT_MAX_TOKENS
+                            stream = await client.chat.completions.create(**params)
+                        elif "Unsupported parameter: 'max_completion_tokens'" in msg and "max_tokens" in msg:
+                            params.pop("max_completion_tokens", None)
+                            params["max_tokens"] = DEFAULT_MAX_TOKENS
+                            stream = await client.chat.completions.create(**params)
+                        else:
+                            raise
                     async for chunk in stream:
                         delta = (chunk.choices[0].delta.content or "") if chunk.choices else ""
                         if delta:
@@ -263,7 +215,7 @@ async def stream_debate_round(
                 finally:
                     await queue.put(None)
 
-            asyncio.create_task(stream_one_groq(model_id))
+            asyncio.create_task(stream_one(model_id))
 
     if expected_sentinels == 0:
         return

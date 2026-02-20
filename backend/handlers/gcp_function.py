@@ -1,7 +1,7 @@
 """
 Google Cloud Function (2nd gen) HTTP handler for the multi-LLM debate API.
 Deploy with: gcloud functions deploy debate-api --gen2 --runtime python311 --trigger-http ...
-Set environment variables (e.g. OPENAI_API_KEY, GEMINI_API_KEY, ...) in the function config.
+Set OPENAI_API_KEY in the function config.
 """
 import json
 import sys

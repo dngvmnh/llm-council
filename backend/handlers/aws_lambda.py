@@ -1,7 +1,7 @@
 """
 AWS Lambda handler for the multi-LLM debate API.
 Configure the Lambda to use Python 3.11+, set handler to handlers.aws_lambda.handler,
-and set environment variables for each LLM API key you want to enable.
+and set OPENAI_API_KEY in the function environment.
 """
 import json
 import sys
