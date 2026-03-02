@@ -22,7 +22,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from core import run_debate_round, stream_debate_round, get_available_models
+from core import (
+    get_available_models,
+    run_debate_pro_con_moderator_judge,
+    run_debate_round,
+    stream_debate_pro_con_moderator_judge,
+    stream_debate_round,
+)
 from handlers.shared import serialize_responses
 from providers import Message
 
@@ -38,6 +44,7 @@ app.add_middleware(
 class DebateRequest(BaseModel):
     messages: list[dict]
     model_ids: list[str] | None = None  # Optional: filter to specific models
+    pipeline: str | None = None  # Optional: "panel" | "debate"
 
 
 @app.get("/")
@@ -55,11 +62,20 @@ async def list_models():
 @app.post("/debate")
 async def debate(req: DebateRequest):
     messages = [Message(role=m.get("role", "user"), content=m.get("content", "")) for m in req.messages]
-    responses = await run_debate_round(messages, selected_models=req.model_ids)
+    pipeline = (req.pipeline or os.getenv("DEFAULT_PIPELINE", "panel")).strip().lower()
+    if pipeline == "debate":
+        responses = await run_debate_pro_con_moderator_judge(messages, selected_models=req.model_ids)
+    else:
+        responses = await run_debate_round(messages, selected_models=req.model_ids)
     return {"responses": serialize_responses(responses)}
 
 
-async def _stream_events(messages: list[Message], selected_models: list[str] | None = None):
+async def _stream_events(messages: list[Message], selected_models: list[str] | None = None, pipeline: str = "panel"):
+    if pipeline == "debate":
+        async for ev in stream_debate_pro_con_moderator_judge(messages, selected_models=selected_models):
+            yield f"data: {json.dumps(ev)}\n\n"
+        return
+
     async for ev in stream_debate_round(messages, selected_models=selected_models):
         yield f"data: {json.dumps(ev)}\n\n"
 
@@ -75,8 +91,9 @@ async def debate_stream(req: DebateRequest):
             },
         )
     messages = [Message(role=m.get("role", "user"), content=m.get("content", "")) for m in req.messages]
+    pipeline = (req.pipeline or os.getenv("DEFAULT_PIPELINE", "panel")).strip().lower()
     return StreamingResponse(
-        _stream_events(messages, selected_models=req.model_ids),
+        _stream_events(messages, selected_models=req.model_ids, pipeline=pipeline),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

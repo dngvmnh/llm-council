@@ -216,6 +216,40 @@
   accent-color: var(--accent);
 }
 
+.mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  white-space: nowrap;
+}
+
+.mode-button {
+  padding: 0.3rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.85rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.mode-button:hover {
+  border-color: var(--accent);
+  background: var(--user-bg);
+}
+
+.mode-button.active {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.mode-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .response-card.streaming .content {
   min-height: 1.2em;
 }

@@ -24,6 +24,11 @@ const DEBATE_FEED_PROMPTS = [
 /** Display name for provider_id (OpenAI model IDs). */
 function getProviderLabel(id: string): string {
   const known: Record<string, string> = {
+    moderator: "Moderator",
+    pro: "Pro",
+    con: "Con",
+    judge: "Judge",
+    system: "System",
     "gpt-4o-mini": "GPT-4o mini",
     "gpt-4o": "GPT-4o",
     "o3-mini": "o3-mini",
@@ -58,6 +63,11 @@ function pickDefaultModels(available: string[]): string[] {
 }
 
 const PROVIDER_COLORS: Record<string, string> = {
+  moderator: "var(--accent)",
+  pro: "var(--chatgpt)",
+  con: "#e07070",
+  judge: "var(--claude)",
+  system: "var(--muted)",
   "gpt-4o-mini": "var(--chatgpt)",
   "gpt-4o": "var(--chatgpt)",
   "o3-mini": "var(--chatgpt)",
@@ -68,6 +78,7 @@ export default function App() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [streaming, setStreaming] = useState(true);
+  const [pipeline, setPipeline] = useState<"panel" | "debate">("debate");
   const [streamingTurn, setStreamingTurn] = useState<{
     user: string;
     content: Record<string, string>;
@@ -170,7 +181,7 @@ export default function App() {
             if ("error" in ev && ev.error) next.errors[id] = ev.error;
             return next;
           });
-        }, Array.from(selectedModels));
+        }, Array.from(selectedModels), pipeline);
         setStreamingTurn((prev) => {
           if (!prev) return null;
           const responses: ProviderResponse[] = Object.entries(prev.content).map(([provider_id, content]) => ({
@@ -195,7 +206,7 @@ export default function App() {
     }
 
     try {
-      const { responses } = await sendDebateRound(messages, Array.from(selectedModels));
+      const { responses } = await sendDebateRound(messages, Array.from(selectedModels), pipeline);
       setTurns((prev) => [...prev, { user: text, responses }]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Request failed");
@@ -258,7 +269,11 @@ export default function App() {
       {showModelSelector && (
         <div className="model-selector">
           <div className="model-selector-header">
-            <span>Select models to include:</span>
+            <span>
+              {pipeline === "debate"
+                ? "Select model pool (used for Moderator / Pro / Con / Judge):"
+                : "Select models to include:"}
+            </span>
             <div className="model-selector-actions">
               <button
                 type="button"
@@ -322,7 +337,11 @@ export default function App() {
               {availableModels.length === 0 ? (
                 <p className="muted">No models detected. Set `OPENAI_API_KEY` in the backend and refresh.</p>
               ) : (
-                <p className="muted">Tip: keep your model selection small to save credits.</p>
+                <p className="muted">
+                  {pipeline === "debate"
+                    ? "Tip: Debate mode runs 4 roles; your selection is the pool."
+                    : "Tip: keep your model selection small to save credits."}
+                </p>
               )}
             </div>
           )}
@@ -388,7 +407,11 @@ export default function App() {
 
           {loading && !streamingTurn && (
             <div className="loading-row">
-              <span className="loading-dots">Asking {selectedModels.size} models…</span>
+              <span className="loading-dots">
+                {pipeline === "debate"
+                  ? "Running debate (Moderator / Pro / Con / Judge)…"
+                  : `Asking ${selectedModels.size} models…`}
+              </span>
             </div>
           )}
           <div ref={bottomRef} />
@@ -410,6 +433,26 @@ export default function App() {
             />
             <span>Stream</span>
           </label>
+          <div className="mode-toggle" role="group" aria-label="Pipeline">
+            <button
+              type="button"
+              className={`mode-button ${pipeline === "debate" ? "active" : ""}`}
+              onClick={() => setPipeline("debate")}
+              disabled={loading}
+              title="Structured debate: Moderator -> Pro/Con -> Judge"
+            >
+              Debate
+            </button>
+            <button
+              type="button"
+              className={`mode-button ${pipeline === "panel" ? "active" : ""}`}
+              onClick={() => setPipeline("panel")}
+              disabled={loading}
+              title="Panel: ask all selected models in parallel"
+            >
+              Panel
+            </button>
+          </div>
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}

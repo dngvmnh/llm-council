@@ -32,11 +32,15 @@ export async function getAvailableModels(): Promise<string[]> {
   return data.models || [];
 }
 
-export async function sendDebateRound(messages: ChatMessage[], modelIds?: string[]): Promise<DebateResponse> {
+export async function sendDebateRound(
+  messages: ChatMessage[],
+  modelIds?: string[],
+  pipeline: "panel" | "debate" = "panel"
+): Promise<DebateResponse> {
   const res = await fetch(`${API_BASE}/debate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages, model_ids: modelIds }),
+    body: JSON.stringify({ messages, model_ids: modelIds, pipeline }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -49,12 +53,13 @@ export async function sendDebateRound(messages: ChatMessage[], modelIds?: string
 export async function sendDebateRoundStream(
   messages: ChatMessage[],
   onEvent: (ev: StreamEvent) => void,
-  modelIds?: string[]
+  modelIds?: string[],
+  pipeline: "panel" | "debate" = "panel"
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/debate/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages, model_ids: modelIds }),
+    body: JSON.stringify({ messages, model_ids: modelIds, pipeline }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
