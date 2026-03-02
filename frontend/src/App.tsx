@@ -335,7 +335,7 @@ export default function App() {
                 ))}
               </div>
               {availableModels.length === 0 ? (
-                <p className="muted">No models detected. Set `OPENAI_API_KEY` in the backend and refresh.</p>
+                <p className="muted">No models detected. Set `OPENAI_API_KEY` in `a.env` and refresh.</p>
               ) : (
                 <p className="muted">
                   {pipeline === "debate"

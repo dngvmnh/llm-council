@@ -9,10 +9,14 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Load .env: project root first, then backend. Only set if not already set so root keys win when backend/.env is empty.
+# Load env files (local dev):
+# - Prefer `a.env` for secrets (e.g. OPENAI_API_KEY), keep `.env` for non-secret config.
+# - Project root wins over backend/ when both exist.
 _backend_dir = Path(__file__).resolve().parent
 _root_dir = _backend_dir.parent
-load_dotenv(_root_dir / ".env")
+load_dotenv(_root_dir / "a.env", override=False)
+load_dotenv(_backend_dir / "a.env", override=False)
+load_dotenv(_root_dir / ".env", override=False)
 load_dotenv(_backend_dir / ".env", override=False)
 load_dotenv(override=False)  # cwd .env if server run from another directory
 

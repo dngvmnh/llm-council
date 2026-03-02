@@ -24,8 +24,13 @@ python -m venv .venv
 source .venv/bin/activate
 
 pip install -r requirements.txt
-cp ../.env .env
-# Edit .env and add at least one API key (see below)
+
+# Secrets live in the project root `a.env` (ignored by git):
+cp ../a.env.example ../a.env
+# Edit ../a.env and set OPENAI_API_KEY
+
+# Optional non-secret config (can be in backend/.env or the project root .env; both are ignored by git):
+cp ../.env.example .env
 python server.py
 ```
 
@@ -43,11 +48,11 @@ npm run dev
 
 Vite will print a URL like **`http://localhost:5173`**. **Open that URL in your browser** to use the app. The frontend talks to the backend on port 8080; keep the backend running.
 
-**Check that it runs:** With the backend up, open `http://localhost:8080` in a browser — you should see `{"ok":true,"service":"multi-llm-debate"}`. Then use the frontend URL to send a message; you should get responses from each configured provider. The backend loads API keys from `backend/.env` or the project root `.env` automatically.
+**Check that it runs:** With the backend up, open `http://localhost:8080` in a browser — you should see `{"ok":true,"service":"multi-llm-debate"}`. Then use the frontend URL to send a message; you should get responses from each configured provider. The backend loads env from `a.env`/`.env` in the project root or `backend/` automatically.
 
 ### 3. Environment variables
 
-Copy `.env.example` to `.env` (backend).
+Copy `a.env.example` to `a.env` (project root) for secrets. Optionally copy `.env.example` to `.env` for non-secret config.
 
 | Variable | Purpose |
 |----------|--------|
@@ -98,6 +103,7 @@ multi-llm-debate/
 ├── .github/workflows/
 │   ├── deploy-aws.yml
 │   └── deploy-gcp.yml
+├── a.env.example
 ├── .env.example
 └── README.md
 ```
