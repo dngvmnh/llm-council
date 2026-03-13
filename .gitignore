@@ -1,6 +1,8 @@
 # Local secrets / env files (do not commit)
 .env
+a.env
 backend/.env
+backend/a.env
 
 backend/.venv/
 backend/__pycache__/

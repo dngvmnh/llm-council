@@ -283,16 +283,6 @@ def _last_user_message(messages: list[Message]) -> str:
     return ""
 
 
-def _recent_user_context(messages: list[Message], max_turns: int = 3) -> str:
-    user_msgs = [m.content.strip() for m in messages if (m.role or "").lower() == "user" and (m.content or "").strip()]
-    if not user_msgs:
-        return ""
-    take = user_msgs[-max(1, max_turns):]
-    if len(take) == 1:
-        return take[0]
-    return "\n".join([f"{i + 1}. {t}" for i, t in enumerate(take)])
-
-
 def _role_system(system: str, role: str) -> str:
     role = role.lower()
     if role == "moderator":
@@ -320,6 +310,60 @@ def _role_system(system: str, role: str) -> str:
     return f"{system}\n\n{extra}".strip()
 
 
+def _truncate_text(s: str, max_chars: int) -> str:
+    s = (s or "").strip()
+    if max_chars <= 0 or len(s) <= max_chars:
+        return s
+    if max_chars <= 3:
+        return s[:max_chars]
+    return f"{s[: max_chars - 3]}..."
+
+
+def _split_history_and_motion(messages: list[Message]) -> tuple[list[Message], str]:
+    """
+    Split the incoming chat into (history_messages, motion_text).
+
+    Motion is the last non-empty user message. History is everything before it.
+    """
+    for i in range(len(messages) - 1, -1, -1):
+        m = messages[i]
+        if (m.role or "").lower() == "user" and (m.content or "").strip():
+            return messages[:i], m.content.strip()
+    return messages, ""
+
+
+def _cap_debate_history(messages: list[Message]) -> list[Message]:
+    """
+    Cap transcript size for the structured debate pipeline to control costs.
+
+    Keeps the last N user turns and truncates assistant/user contents.
+    """
+    keep_user_turns = int(os.getenv("DEBATE_HISTORY_TURNS", "2"))
+    max_user_chars = int(os.getenv("DEBATE_HISTORY_USER_MAX_CHARS", "2000"))
+    max_assistant_chars = int(os.getenv("DEBATE_HISTORY_ASSISTANT_MAX_CHARS", "800"))
+
+    cleaned: list[Message] = []
+    for m in messages:
+        role = (m.role or "").lower()
+        if role not in ("user", "assistant"):
+            continue
+        if not (m.content or "").strip():
+            continue
+        cleaned.append(m)
+
+    if keep_user_turns > 0:
+        user_idxs = [i for i, m in enumerate(cleaned) if (m.role or "").lower() == "user"]
+        if len(user_idxs) > keep_user_turns:
+            cleaned = cleaned[user_idxs[-keep_user_turns] :]
+
+    out: list[Message] = []
+    for m in cleaned:
+        role = (m.role or "").lower()
+        cap = max_user_chars if role == "user" else max_assistant_chars
+        out.append(Message(role=role, content=_truncate_text(m.content, cap)))
+    return out
+
+
 async def run_debate_pro_con_moderator_judge(
     messages: List[Message],
     system_prompt: str | None = None,
@@ -342,8 +386,12 @@ async def run_debate_pro_con_moderator_judge(
 
     system = system_prompt or DEFAULT_SYSTEM
     role_models = _pick_debate_role_models(selected_models)
-    motion = _last_user_message(messages) or "(no user prompt provided)"
-    user_ctx = _recent_user_context(messages, max_turns=int(os.getenv("DEBATE_USER_CONTEXT_TURNS", "3")))
+    history_msgs, motion = _split_history_and_motion(messages)
+    motion = motion or "(no user prompt provided)"
+    debate_mode = (os.getenv("DEBATE_MODE") or "full").strip().lower()
+    short_mode = debate_mode in ("short", "lite", "mini")
+    debate_mode = (os.getenv("DEBATE_MODE") or "full").strip().lower()
+    short_mode = debate_mode in ("short", "lite", "mini")
 
     role_line = (
         f"Models: Pro={role_models['pro']}, Con={role_models['con']}, "
@@ -352,9 +400,8 @@ async def run_debate_pro_con_moderator_judge(
     if selected_models and len(_dedupe_preserve_order(selected_models)) > 4:
         role_line += f" (selected {len(_dedupe_preserve_order(selected_models))}; using 4 roles)"
 
-    base_messages: list[Message] = []
-    if user_ctx:
-        base_messages.append(Message(role="user", content=f"Conversation context (user only):\n{user_ctx}"))
+    # Give each role a capped view of the recent transcript so they can stay consistent across turns.
+    base_messages: list[Message] = _cap_debate_history(history_msgs)
 
     async def one(role: str, model_id: str, prompt: str) -> ProviderResponse:
         if not model_id:
@@ -373,8 +420,8 @@ async def run_debate_pro_con_moderator_judge(
         "1) Restate the motion neutrally in 1 sentence.\n"
         "2) Define key terms/assumptions.\n"
         "3) Give 3 judging criteria.\n"
-        "4) Ask 2 cross-exam questions for Pro and 2 for Con.\n"
-        "Output Markdown with headings: Motion, Definitions, Criteria, Questions."
+        + ("" if short_mode else "4) Ask 2 cross-exam questions for Pro and 2 for Con.\n")
+        + ("Output Markdown with headings: Motion, Definitions, Criteria." if short_mode else "Output Markdown with headings: Motion, Definitions, Criteria, Questions.")
     )
     moderator_framing = await one("moderator", role_models["moderator"], moderator_framing_prompt)
 
@@ -402,6 +449,33 @@ async def run_debate_pro_con_moderator_judge(
         one("pro", role_models["pro"], pro_opening_prompt),
         one("con", role_models["con"], con_opening_prompt),
     )
+
+    if short_mode:
+        judge_prompt = (
+            f"{role_line}\n\n"
+            f"Debate motion:\n{motion}\n\n"
+            f"Moderator framing:\n{moderator_framing.content}\n\n"
+            f"Pro opening:\n{pro_opening.content}\n\n"
+            f"Con opening:\n{con_opening.content}\n\n"
+            "Task:\n"
+            "1) Pick a winner (Pro/Con) and justify using the judging criteria.\n"
+            "2) Give a score out of 10 for each side.\n"
+            "3) Provide a short 'best answer' to the user.\n"
+            "Output Markdown with headings: Verdict, Scores, Best Answer."
+        )
+        judge = await one("judge", role_models["judge"], judge_prompt)
+
+        moderator_content = f"{role_line}\n\n### Framing\n{moderator_framing.content}".strip()
+        pro_content = f"{role_line}\n\n### Opening\n{pro_opening.content}".strip()
+        con_content = f"{role_line}\n\n### Opening\n{con_opening.content}".strip()
+        judge_content = f"{role_line}\n\n{judge.content}".strip()
+
+        return [
+            ProviderResponse(provider_id="moderator", content=moderator_content, error=moderator_framing.error),
+            ProviderResponse(provider_id="pro", content=pro_content, error=pro_opening.error),
+            ProviderResponse(provider_id="con", content=con_content, error=con_opening.error),
+            ProviderResponse(provider_id="judge", content=judge_content, error=judge.error),
+        ]
 
     moderator_cross_prompt = (
         f"{role_line}\n\n"
@@ -487,8 +561,8 @@ async def stream_debate_pro_con_moderator_judge(
         return
 
     role_models = _pick_debate_role_models(selected_models)
-    motion = _last_user_message(messages) or "(no user prompt provided)"
-    user_ctx = _recent_user_context(messages, max_turns=int(os.getenv("DEBATE_USER_CONTEXT_TURNS", "3")))
+    history_msgs, motion = _split_history_and_motion(messages)
+    motion = motion or "(no user prompt provided)"
 
     role_line = (
         f"Models: Pro={role_models['pro']}, Con={role_models['con']}, "
@@ -497,7 +571,7 @@ async def stream_debate_pro_con_moderator_judge(
     if selected_models and len(_dedupe_preserve_order(selected_models)) > 4:
         role_line += f" (selected {len(_dedupe_preserve_order(selected_models))}; using 4 roles)"
 
-    base_user_block = f"Conversation context (user only):\n{user_ctx}\n\n" if user_ctx else ""
+    base_messages: list[Message] = _cap_debate_history(history_msgs)
 
     from openai import AsyncOpenAI
 
@@ -512,8 +586,8 @@ async def stream_debate_pro_con_moderator_judge(
         yield {"model_id": role, "delta": header}
 
         openai_messages = [{"role": "system", "content": _role_system(system, role)}]
-        if base_user_block:
-            openai_messages.append({"role": "user", "content": base_user_block.strip()})
+        for m in base_messages:
+            openai_messages.append({"role": m.role, "content": m.content})
         openai_messages.append({"role": "user", "content": prompt})
 
         params = {"model": model_id, "messages": openai_messages, "stream": True}
@@ -555,8 +629,8 @@ async def stream_debate_pro_con_moderator_judge(
         "1) Restate the motion neutrally in 1 sentence.\n"
         "2) Define key terms/assumptions.\n"
         "3) Give 3 judging criteria.\n"
-        "4) Ask 2 cross-exam questions for Pro and 2 for Con.\n"
-        "Output Markdown with headings: Motion, Definitions, Criteria, Questions."
+        + ("" if short_mode else "4) Ask 2 cross-exam questions for Pro and 2 for Con.\n")
+        + ("Output Markdown with headings: Motion, Definitions, Criteria." if short_mode else "Output Markdown with headings: Motion, Definitions, Criteria, Questions.")
     )
     moderator_framing = ""
     async for ev in stream_one("moderator", role_models["moderator"], f"{role_line}\n\n### Framing\n\n", moderator_framing_prompt):
@@ -597,6 +671,23 @@ async def stream_debate_pro_con_moderator_judge(
         if ev.get("delta"):
             con_opening += ev["delta"]
         yield ev
+
+    if short_mode:
+        judge_prompt = (
+            f"{role_line}\n\n"
+            f"Debate motion:\n{motion}\n\n"
+            f"Moderator framing:\n{moderator_framing}\n\n"
+            f"Pro opening:\n{pro_opening}\n\n"
+            f"Con opening:\n{con_opening}\n\n"
+            "Task:\n"
+            "1) Pick a winner (Pro/Con) and justify using the judging criteria.\n"
+            "2) Give a score out of 10 for each side.\n"
+            "3) Provide a short 'best answer' to the user.\n"
+            "Output Markdown with headings: Verdict, Scores, Best Answer."
+        )
+        async for ev in stream_one("judge", role_models["judge"], f"{role_line}\n\n### Verdict\n\n", judge_prompt):
+            yield ev
+        return
 
     # Moderator cross-exam
     moderator_cross_prompt = (

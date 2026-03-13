@@ -61,6 +61,47 @@ Copy `a.env.example` to `a.env` (project root) for secrets. Optionally copy `.en
 | **`MAX_MODELS_PER_ROUND`** | Optional. Hard cap on how many models can run per message (default `3`). |
 | **`DEFAULT_MAX_TOKENS`** | Optional. Default max output tokens per model call (default `256`). |
 
+### Instagram (optional)
+
+This repo can also act as an **Instagram DM bot** via the official Instagram Messaging API.
+
+Important limitation: the official API supports **1:1 conversations only** (no group DMs). The bot can still *simulate* a “group chat” by replying as multiple personas (Moderator/Pro/Con/Judge) in sequence.
+
+Backend endpoints:
+- `GET /webhooks/instagram` (verification)
+- `POST /webhooks/instagram` (message receiver)
+
+Required secrets (put them in `a.env`):
+- `IG_ACCESS_TOKEN`
+- `IG_USER_ID`
+- `IG_VERIFY_TOKEN`
+- `IG_APP_SECRET` (optional but recommended for webhook signature verification)
+
+Optional config:
+- `IG_MODEL_POOL` (comma-separated OpenAI model IDs used as the pool for role assignment)
+
+### Telegram (optional)
+
+This repo can also act as a **Telegram group chat bot** via the Telegram Bot API.
+
+Backend endpoint:
+- `POST /webhooks/telegram` (webhook receiver)
+
+Secrets (put them in `a.env`):
+- `TG_BOT_TOKEN`
+- `TG_BOT_USERNAME` (optional; used for @mention detection in groups)
+- `TG_WEBHOOK_SECRET_TOKEN` (optional; if set, the backend verifies `X-Telegram-Bot-Api-Secret-Token`)
+
+Useful config (in `.env`):
+- `TG_TRIGGER` (default `command_or_mention`)
+- `TG_DEFAULT_PIPELINE` (default `debate`)
+- `TG_MODEL_POOL` (comma-separated OpenAI model IDs used as the pool for role assignment)
+- `TG_PANEL_COMBINE=1` (default; avoids spamming groups with one message per model)
+
+For local dev without a public URL, you can enable long polling:
+- set `TG_POLLING=1`
+- do **not** set a Telegram webhook (polling conflicts with webhooks)
+
 ## Deploying
 
 ### AWS Lambda
